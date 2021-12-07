@@ -6,8 +6,8 @@
   ******************************************************************************
   * @attention
   *
-  * <h2><center>&copy; Copyright (c) 2021 STMicroelectronics.
-  * All rights reserved.</center></h2>
+  * Ultrasonic Anenometer
+  * Ben Froelich-Leon
   *
   * This software component is licensed by ST under BSD 3-Clause license,
   * the "License"; You may not use this file except in compliance with the
@@ -22,7 +22,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include "retarget.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,6 +34,11 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define RXBUFFERSIZE 10
+/* Definitions of environment analog values */
+  /* Value of analog reference voltage (Vref+), connected to analog voltage   */
+  /* supply Vdda (unit: mV).                                                  */
+  #define VDDA_APPLI                       (3300U)
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -41,15 +47,19 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
+/* Variables for ADC conversion data computation to physical values */
+__IO uint16_t uhADCxConvertedData_Voltage_mVolt = 0U;        /* Value of voltage on GPIO pin (on which is mapped ADC channel) calculated from ADC conversion data (unit: mV) */
 
 /* Buffer used for transmission */
-uint8_t aTxStartMessage[] = "\n\r ****UART-loop back communication based on DMA****\n\r Enter 10 characters using keyboard :\n\r";
-uint8_t aTxEndMessage[] = "\n\r Example Finished\n\r";
+uint8_t aTxStartMessage[] = "uart running using DMA\n";
+uint8_t aTxEndMessage[] = "done";
 /* Buffer used for reception */
 uint8_t aRxBuffer[RXBUFFERSIZE];
 /* Size of Transmission buffer */
@@ -63,6 +73,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_DMA_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -102,51 +113,60 @@ int main(void)
   MX_DMA_Init();
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-  // manual DMA
-#if 0
-  if(HAL_UART_Transmit(&huart2, (uint8_t*)"YOYOYO\r\n", 9, 0xffff)!= HAL_OK)
+  RetargetInit(&huart2);
+  //uhADCxConvertedData_Voltage_mVolt = VAR_CONVERTED_DATA_INIT_VALUE;
+  /* Run the ADC calibration in single-ended mode */
+  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
   {
-    /* Transfer error in transmission process */
     Error_Handler();
   }
-  HAL_UART_Receive(&huart2, aRxBuffer, 10, 0xffff);
-#endif
-  /* USER CODE END WHILE */
-	  /*##-1- Start the transmission process #####################################*/
-	  /* User start transmission data through "TxBuffer" buffer */
-	  if(HAL_UART_Transmit_DMA(&huart2, (uint8_t*)aTxStartMessage, TXSTARTMESSAGESIZE)!= HAL_OK)
-	  {
-	    /* Transfer error in transmission process */
-	    Error_Handler();
-	  }
+
+  /* User start transmission data through "TxBuffer" buffer */
+  if(HAL_UART_Transmit_DMA(&huart2, (uint8_t*)aTxStartMessage, TXSTARTMESSAGESIZE)!= HAL_OK)
+  {
+	/* Transfer error in transmission process */
+	Error_Handler();
+  }
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (aRxBuffer[0] != 'Q')
+  while (1)
   {
-	  // read a byte
-	  if (HAL_UART_Receive_DMA(&huart2, (uint8_t *)aRxBuffer, 1) != HAL_OK)
+	  while (HAL_UART_GetState(&huart2) != HAL_UART_STATE_READY) {}
+
+
+      int n = 10;
+      uint32_t adc_result = 0;
+      for(int i = 0; i < n; i++)
+      {
+    	  while(HAL_IS_BIT_SET(HAL_ADC_GetState(&hadc1), HAL_ADC_STATE_BUSY));
+          // read from ADC
+    	  if(HAL_ADC_Start(&hadc1) != HAL_OK) {Error_Handler();}
+    	  if(HAL_ADC_PollForConversion(&hadc1, 0xffff /*TODO*/) != HAL_OK) {Error_Handler();}
+          adc_result += HAL_ADC_GetValue(&hadc1);
+      }
+      adc_result /= n;
+      printf("t=%d\r\n", adc_result);
+/*
+      // send data to UART
+	  if (HAL_UART_Transmit_DMA(&huart2, (uint8_t *)adc_result, sizeof(uint32_t)) != HAL_OK)
 	  {
-	    /* Transfer error in reception process */
 	    Error_Handler();
 	  }
-
-	  /*##-3- Wait for the end of the transfer ###################################*/
-	  while (HAL_UART_GetState(&huart2) != HAL_UART_STATE_READY)
+	  while (HAL_UART_GetState(&huart2) != HAL_UART_STATE_READY) {}
+	  if (HAL_UART_Transmit_DMA(&huart2, (uint8_t *)'\n', 1) != HAL_OK)
 	  {
-	  }
-
-	  /*##-4- Send the received Buffer ###########################################*/
-	  if (HAL_UART_Transmit_DMA(&huart2, (uint8_t *)aRxBuffer, 1) != HAL_OK)
-	  {
-	    /* Transfer error in transmission process */
 	    Error_Handler();
 	  }
+	  */
   }
-  /* USER CODE BEGIN 3 */
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
   /*##-5- Wait for the end of the transfer ###################################*/
   /*  Before starting a new communication transfer, you need to check the current
 	  state of the peripheral; if it's busy you need to wait for the end of current
@@ -180,6 +200,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -207,6 +228,68 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC1;
+  PeriphClkInit.Adc1ClockSelection = RCC_ADC1PLLCLK_DIV1;
+
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+  /** Common config
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.LowPowerAutoWait = DISABLE;
+  hadc1.Init.Overrun = ADC_OVR_DATA_OVERWRITTEN;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;
+  sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -364,4 +447,3 @@ void assert_failed(uint8_t *file, uint32_t line)
 }
 #endif /* USE_FULL_ASSERT */
 
-/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
