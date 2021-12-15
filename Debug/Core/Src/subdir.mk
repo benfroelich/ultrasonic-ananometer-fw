@@ -10,7 +10,8 @@ C_SRCS += \
 ../Core/Src/stm32f3xx_hal_msp.c \
 ../Core/Src/stm32f3xx_it.c \
 ../Core/Src/sysmem.c \
-../Core/Src/system_stm32f3xx.c 
+../Core/Src/system_stm32f3xx.c \
+../Core/Src/tx.c 
 
 OBJS += \
 ./Core/Src/main.o \
@@ -18,7 +19,8 @@ OBJS += \
 ./Core/Src/stm32f3xx_hal_msp.o \
 ./Core/Src/stm32f3xx_it.o \
 ./Core/Src/sysmem.o \
-./Core/Src/system_stm32f3xx.o 
+./Core/Src/system_stm32f3xx.o \
+./Core/Src/tx.o 
 
 C_DEPS += \
 ./Core/Src/main.d \
@@ -26,7 +28,8 @@ C_DEPS += \
 ./Core/Src/stm32f3xx_hal_msp.d \
 ./Core/Src/stm32f3xx_it.d \
 ./Core/Src/sysmem.d \
-./Core/Src/system_stm32f3xx.d 
+./Core/Src/system_stm32f3xx.d \
+./Core/Src/tx.d 
 
 
 # Each subdirectory must supply rules for building sources it contributes
@@ -36,7 +39,7 @@ Core/Src/%.o: ../Core/Src/%.c Core/Src/subdir.mk
 clean: clean-Core-2f-Src
 
 clean-Core-2f-Src:
-	-$(RM) ./Core/Src/main.d ./Core/Src/main.o ./Core/Src/retarget.d ./Core/Src/retarget.o ./Core/Src/stm32f3xx_hal_msp.d ./Core/Src/stm32f3xx_hal_msp.o ./Core/Src/stm32f3xx_it.d ./Core/Src/stm32f3xx_it.o ./Core/Src/sysmem.d ./Core/Src/sysmem.o ./Core/Src/system_stm32f3xx.d ./Core/Src/system_stm32f3xx.o
+	-$(RM) ./Core/Src/main.d ./Core/Src/main.o ./Core/Src/retarget.d ./Core/Src/retarget.o ./Core/Src/stm32f3xx_hal_msp.d ./Core/Src/stm32f3xx_hal_msp.o ./Core/Src/stm32f3xx_it.d ./Core/Src/stm32f3xx_it.o ./Core/Src/sysmem.d ./Core/Src/sysmem.o ./Core/Src/system_stm32f3xx.d ./Core/Src/system_stm32f3xx.o ./Core/Src/tx.d ./Core/Src/tx.o
 
 .PHONY: clean-Core-2f-Src
 
