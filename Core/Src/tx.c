@@ -12,7 +12,7 @@ typedef struct io_pin_t {
 
 io_pin_t pulse_p, pulse_n;
 
-extern TIM_HandleTypeDef htim17;
+extern TIM_HandleTypeDef htim17, htim1;
 
 int _pulse_cnt;
 const int num_edges = 10;
@@ -40,7 +40,7 @@ pulse_state get_pulse_state()
 {
     return _pulse_state;
 }
-
+/*
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	if(htim == &htim17 && _pulse_state == PULSE_BUSY)
@@ -57,5 +57,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			_pulse_state = PULSE_IDLE;
 		}
 	}
+	if(htim == &htim1)
+	{
+        asm("nop");
+	}
 }
+*/
 
