@@ -22,10 +22,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "tx.h"
-
 #include <stdio.h>
 #include "retarget.h"
+#include "anemometer.h"
 
 /* USER CODE END Includes */
 
@@ -37,10 +36,6 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define RXBUFFERSIZE 10
-/* Definitions of environment analog values */
-  /* Value of analog reference voltage (Vref+), connected to analog voltage   */
-  /* supply Vdda (unit: mV).                                                  */
-  #define VDDA_APPLI                       (3300U)
 
 /* USER CODE END PD */
 
@@ -62,12 +57,6 @@ DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 /* Variables for ADC conversion data computation to physical values */
-__IO uint16_t uhADCxConvertedData_Voltage_mVolt = 0U;        /* Value of voltage on GPIO pin (on which is mapped ADC channel) calculated from ADC conversion data (unit: mV) */
-#define ADC_BUFF_SZ 500
-#define SAMP_PER_WORD 2
-#define SAMP1_MASK 0x00000FFF
-#define SAMP2_MASK 0x0FFF0000
-uint32_t adc_buffer[ADC_BUFF_SZ];
 
 /* Buffer used for transmission */
 uint8_t aTxStartMessage[] = "uart running using DMA\n";
@@ -104,7 +93,6 @@ static void MX_TIM2_Init(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-	for(int i = 0; i < ADC_BUFF_SZ; i++) adc_buffer[i] = 69;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -137,29 +125,12 @@ int main(void)
   /* Run the ADC calibration in single-ended mode */
   if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK) Error_Handler();
   while(HAL_IS_BIT_SET(HAL_ADC_GetState(&hadc1), HAL_ADC_STATE_BUSY));
-
+  anemometer_init();
   while(1)
   {
 #if 1
-	  // since two 12-bit samples are packed into each 32-bit word, we can
-	  // sample 2x the buffer size (in 32-bit words)
-	  // this command starts the ADC, it will wait until triggered by TIM1 (I think? TODO)
-	  if(HAL_ADC_Start_DMA(&hadc1, adc_buffer, ADC_BUFF_SZ * SAMP_PER_WORD) != HAL_OK)
-		  Error_Handler();
-	  // start output compare that allows viewing tim2 freq
-	  if(HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
-	  // this triggers the ADC and TIM2
-	  if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
-	  // view TIM1 transitions on PC2
-	  if(HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_3) != HAL_OK) Error_Handler();
-	  // wait for ADC conversions to complete
-	  //printf("sampling\r\n");
-	  while(HAL_DMA_GetState(&hdma_adc1) != HAL_DMA_STATE_READY);
-	  //printf("done sampling\r\n");
-	  // stop the timer channels
-	  if(HAL_TIM_OC_Stop_IT(&htim2, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
-	  if(HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
-	  if(HAL_TIM_OC_Stop(&htim1, TIM_CHANNEL_3) != HAL_OK) Error_Handler();
+anemometer_issue_pulse(NORTH);
+while(anemometer_get_state() == ANEMOMETER_BUSY);
 
 #endif
 #if 0
@@ -172,14 +143,7 @@ int main(void)
    	  adc_result1 = HAL_ADC_GetValue(&hadc1);
    	  printf("%li\r\n", adc_result1);
 #endif
-#if 1
-	  for(int i = 0; i < ADC_BUFF_SZ; i ++)
-	  {
-		  int word = adc_buffer[i];
-		  printf("%i\r\n%i\r\n", (word & SAMP1_MASK), (word & SAMP2_MASK) >> (32 / 2));
-	  }
-	  while (HAL_UART_GetState(&huart2) != HAL_UART_STATE_READY) {}
-#endif
+
   }
 
   /* USER CODE END 2 */
@@ -188,15 +152,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  while(HAL_TIM_PWM_GetState(&htim1) != HAL_TIM_STATE_READY);
-	  HAL_Delay(20);
-	  //if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
-	  if(issue_pulse(0) != PULSE_OK) Error_Handler();
-	  while(get_pulse_state() == PULSE_BUSY)
-	  {
-
-	  }
-	  HAL_Delay(20);
 
 #if 0
 	  while (HAL_UART_GetState(&huart2) != HAL_UART_STATE_READY) {}
@@ -384,7 +339,7 @@ static void MX_TIM1_Init(void)
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim1.Init.Period = 23;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim1.Init.RepetitionCounter = 8000;
+  htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
   {
@@ -475,9 +430,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 800;
+  htim2.Init.Prescaler = 1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 1;
+  htim2.Init.Period = 399;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -513,10 +468,10 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+  __HAL_TIM_ENABLE_OCxPRELOAD(&htim2, TIM_CHANNEL_1);
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
-  HAL_TIM_MspPostInit(&htim2);
 
 }
 
