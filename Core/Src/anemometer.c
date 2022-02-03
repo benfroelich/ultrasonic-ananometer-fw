@@ -11,14 +11,44 @@
 // output TIM1 on PC2 (1/2 actual frequency)
 #define TIM1_PC2
 // log the waveform using printf and default serial studio format
-//#define DUMP_WAVEFORM
+#define DUMP_WAVEFORM
 uint32_t adc_buffer[ADC_BUFF_SZ];
 
+// offset into BSRR register to either set or clear the GPIO
+const uint32_t PIN_ON = 0;
+const uint32_t PIN_OFF = 16;
 // pulse compression with barker codes
 // see https://en.wikipedia.org/wiki/Barker_code
 // barker 7: −16.9 dB sidelobe ratio
-const int barker_code[] = {+1, +1, +1, -1, -1, +1, -1};
-const int barker_sz = sizeof(barker_code)/sizeof(barker_code[0]);
+// TODO: dyn assign by barker code rather than hard-coded:
+// const uint32_t barker_code_p[] = {+1, +1, +1, -1, -1, +1, -1};
+// NOTE: the arrays have an extra element at the end to reset the pins back to 0
+const uint32_t barker_code_p[] = {
+		GPIO_PIN_10 << PIN_ON,
+	    GPIO_PIN_10 << PIN_ON,
+	    GPIO_PIN_10 << PIN_ON,
+	    GPIO_PIN_10 << PIN_OFF,
+	    GPIO_PIN_10 << PIN_OFF,
+	    GPIO_PIN_10 << PIN_ON,
+	    GPIO_PIN_10 << PIN_OFF,
+	    GPIO_PIN_10 << PIN_OFF,
+	    GPIO_PIN_10 << PIN_OFF,
+};
+const uint32_t barker_code_n[] = {
+		// extra padding sample at beginning because this will be driven by
+		// tim2 PWM CH1 , which will fire once before the first update event
+		GPIO_PIN_3 << PIN_OFF,
+		GPIO_PIN_3 << PIN_OFF,
+		GPIO_PIN_3 << PIN_OFF,
+		GPIO_PIN_3 << PIN_OFF,
+		GPIO_PIN_3 << PIN_ON,
+		GPIO_PIN_3 << PIN_ON,
+		GPIO_PIN_3 << PIN_OFF,
+		GPIO_PIN_3 << PIN_ON,
+		GPIO_PIN_3 << PIN_OFF,
+};
+const int barker_sz = sizeof(barker_code_p)/sizeof(barker_code_p[0]);
+const uint32_t scratch_addr;
 
 anemometer_state_t _state = ANEMOMETER_UNINIT;
 
@@ -34,6 +64,8 @@ extern TIM_HandleTypeDef htim2;
 extern ADC_HandleTypeDef hadc1;
 extern DMA_HandleTypeDef hdma_adc1;
 extern UART_HandleTypeDef huart2;
+extern DMA_HandleTypeDef hdma_tim2_up;
+extern DMA_HandleTypeDef hdma_tim2_ch1;
 
 int _edge_cnt;
 
@@ -57,11 +89,24 @@ anemometer_status_t anemometer_issue_pulse(const tx_node node)
 	pulse_p.bank = GPIOA; pulse_p.ch = GPIO_PIN_10;
 	pulse_n.bank = GPIOB; pulse_n.ch = GPIO_PIN_3;
 
+    // stop the timers if they were running already
+	// they shouldn't be running if this task is being
+	// invoked, but leave it in for now
+	if(HAL_TIM_Base_Stop(&htim1) != HAL_OK) Error_Handler();
+	if(HAL_TIM_Base_Stop(&htim2) != HAL_OK) Error_Handler();
+
 	HAL_GPIO_WritePin(pulse_p.bank, pulse_p.ch, GPIO_PIN_RESET);
 	HAL_GPIO_WritePin(pulse_n.bank, pulse_n.ch, GPIO_PIN_RESET);
 
-	HAL_TIM_Base_Stop(&htim1);
-	HAL_TIM_Base_Stop(&htim2);
+	__HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_CC1);
+	__HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_UPDATE);
+	if(HAL_DMA_Start_IT(&hdma_tim2_up, (uint32_t)barker_code_p,
+			(uint32_t)&(pulse_p.bank->BSRR), barker_sz) != HAL_OK)
+		Error_Handler();
+	if(HAL_DMA_Start_IT(&hdma_tim2_ch1, (uint32_t)barker_code_n,
+			(uint32_t)&(pulse_n.bank->BSRR), barker_sz) != HAL_OK)
+		Error_Handler();
+
 	// reset counters
 	htim2.Instance->CNT = 0;
 	htim1.Instance->CNT = 0;
@@ -70,8 +115,10 @@ anemometer_status_t anemometer_issue_pulse(const tx_node node)
 	// this command starts the ADC, it will wait until triggered by TIM1 (I think? TODO)
 	if(HAL_ADC_Start_DMA(&hadc1, adc_buffer, ADC_BUFF_SZ * SAMP_PER_WORD) != HAL_OK)
 		Error_Handler();
-	// start output compare that allows viewing tim2 freq
-	if(HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
+	// start time base on TIM2, the update event will will trigger DMA->GPIO on pulse_p output
+	if(HAL_TIM_Base_Start(&htim2) != HAL_OK) Error_Handler();
+	// start no-output PWM on TIM2 CH1 which will trigger DMA->GPIO on pulse_n output
+	if(HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
 	// this triggers the ADC and TIM2
 	if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
 	// view TIM1 transitions on PC2
@@ -81,9 +128,12 @@ anemometer_status_t anemometer_issue_pulse(const tx_node node)
 	// wait for ADC conversions to complete
 	//printf("sampling\r\n");
 	while(HAL_DMA_GetState(&hdma_adc1) != HAL_DMA_STATE_READY);
+	while(HAL_DMA_GetState(&hdma_tim2_ch1) != HAL_DMA_STATE_READY);
+	while(HAL_DMA_GetState(&hdma_tim2_up) != HAL_DMA_STATE_READY);
 	//printf("done sampling\r\n");
 	// stop the timer channels
-	if(HAL_TIM_OC_Stop_IT(&htim2, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
+	if(HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
+	if(HAL_TIM_Base_Stop(&htim2) != HAL_OK) Error_Handler();
 	if(HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
 #ifdef TIM1_PC2
 	if(HAL_TIM_OC_Stop(&htim1, TIM_CHANNEL_3) != HAL_OK) Error_Handler();
@@ -113,6 +163,7 @@ anemometer_state_t anemometer_get_state()
 // because we need to
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
 {
+#if 0
 	if(htim == &htim2)
 	{
 		if(_edge_cnt < barker_sz)
@@ -138,11 +189,12 @@ void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
 			HAL_GPIO_WritePin(pulse_n.bank, pulse_n.ch, GPIO_PIN_RESET);
 		}
 	}
+#endif
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-	if(htim == &htim2) HAL_GPIO_TogglePin(pulse_p.bank, pulse_p.ch);
+	//if(htim == &htim2) HAL_GPIO_TogglePin(pulse_p.bank, pulse_p.ch);
 }
 
-
+//void HAL_DMA()
