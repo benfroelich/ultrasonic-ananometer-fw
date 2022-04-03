@@ -6,8 +6,6 @@
 *.obj
 *.elf
 
-Debug
-
 *.su
 
 # depenedencies

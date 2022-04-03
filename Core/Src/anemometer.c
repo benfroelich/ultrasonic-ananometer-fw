@@ -11,7 +11,7 @@
 // output TIM1 on PC2 (1/2 actual frequency)
 #define TIM1_PC2
 // log the waveform using printf and default serial studio format
-#define DUMP_WAVEFORM
+//#define DUMP_WAVEFORM
 uint32_t adc_buffer[ADC_BUFF_SZ];
 
 // offset into BSRR register to either set or clear the GPIO
